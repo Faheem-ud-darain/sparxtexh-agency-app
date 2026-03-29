@@ -1,0 +1,38 @@
+﻿{
+  "status": "success",
+  "result": [
+    {
+      "projectId": "arham-6e3c5",
+      "projectNumber": "685544017540",
+      "displayName": "Arham",
+      "name": "projects/arham-6e3c5",
+      "resources": {
+        "hostingSite": "arham-6e3c5"
+      },
+      "state": "ACTIVE",
+      "etag": "1_31da9b5b-63bb-49ae-ba5f-a95a286c2e31"
+    },
+    {
+      "projectId": "drowsiness-detector-a6925",
+      "projectNumber": "169704957723",
+      "displayName": "Drowsiness Detector",
+      "name": "projects/drowsiness-detector-a6925",
+      "resources": {
+        "hostingSite": "drowsiness-detector-a6925"
+      },
+      "state": "ACTIVE",
+      "etag": "1_83586fd7-09ac-49a4-8d2c-41951e9fd4f1"
+    },
+    {
+      "projectId": "sparxtexhapp",
+      "projectNumber": "853226305803",
+      "displayName": "SparxTexhAPP",
+      "name": "projects/sparxtexhapp",
+      "resources": {
+        "hostingSite": "sparxtexhapp"
+      },
+      "state": "ACTIVE",
+      "etag": "1_ba47b3a0-9488-4871-86ba-fe384fc22274"
+    }
+  ]
+}

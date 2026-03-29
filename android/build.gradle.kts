@@ -5,15 +5,14 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
+// Compute the build directory as a true absolute Java File so Gradle never
+// attempts a relative-path calculation across different Windows drive letters
+// (e.g. E:\project vs C:\pub-cache), which would throw "different roots".
+val absoluteBuildDir: File = rootProject.rootDir.parentFile.resolve("build").canonicalFile
+rootProject.layout.buildDirectory.set(absoluteBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    project.layout.buildDirectory.set(File(absoluteBuildDir, project.name))
 }
 subprojects {
     project.evaluationDependsOn(":app")
