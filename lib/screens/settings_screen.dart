@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 import '../app_constants.dart';
 
@@ -32,8 +33,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     try {
       final doc = await serviceWeightsDoc.get();
       if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        data.forEach((k, v) {
+        final data = doc.data();
+        data?.forEach((k, v) {
           if (_weightCtrls.containsKey(k)) _weightCtrls[k]!.text = v.toString();
         });
         setState(() {});
@@ -44,7 +45,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   Future<void> _loadLockStatus() async {
     try {
       final doc = await appConfigDoc.get();
-      if (doc.exists) setState(() => _monthLocked = (doc.data() as Map<String, dynamic>?)?['month_locked'] == true);
+      if (doc.exists) setState(() => _monthLocked = (doc.data())?['month_locked'] == true);
     } catch (_) {}
   }
 
@@ -59,9 +60,9 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       await serviceWeightsDoc.set(data);
       serviceWeights = data; // update in-memory cache
       await logEvent(type: 'SETTINGS_UPDATED', description: 'Service weights updated by admin');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Service weights saved!')));
+      if (mounted) showSystemNotification(context, 'SERVICE WEIGHTS CALIBRATED');
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted) showSystemNotification(context, 'SYSTEM ERROR: $e', isError: true);
     } finally { setState(() => _savingWeights = false); }
   }
 
@@ -69,7 +70,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     await appConfigDoc.set({'month_locked': locked}, SetOptions(merge: true));
     await logEvent(type: locked ? 'MONTH_LOCKED' : 'MONTH_UNLOCKED', description: 'Month ${locked ? 'locked' : 'unlocked'} by admin');
     setState(() => _monthLocked = locked);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Month ${locked ? 'LOCKED 🔒' : 'UNLOCKED 🔓'}')));
+    if (mounted) showSystemNotification(context, 'FINANCIAL PERIOD ${locked ? 'LOCKED' : 'UNLOCKED'}', isError: locked);
   }
 
   // ─── Archive snapshot ──────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       double totalRevenue = 0, setupCosts = 0, teamExpenses = 0;
       for (final d in clientsSnap.docs) { totalRevenue += ((d.data() as Map)['amount_received'] as num? ?? 0).toDouble(); }
       for (final d in expensesSnap.docs) {
-        final data = d.data() as Map<String, dynamic>;
+        final data = d.data();
         final amt = (data['amount'] as num? ?? 0).toDouble();
         if (data['type'] == 'setup_cost') {
           setupCosts += amt;
@@ -101,7 +102,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
         }
       }
       final userSummaries = usersSnap.docs.map((d) {
-        final data = d.data() as Map<String, dynamic>;
+        final data = d.data();
         return {'uid': d.id, 'name': data['name'], 'points': data['points'] ?? 0};
       }).toList();
       // Write archive
@@ -128,9 +129,9 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       
       await batch.commit();
       await logEvent(type: 'MONTH_ARCHIVED', description: 'Month $curMonth archived & reset');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Month $curMonth archived & reset ✅')));
+      if (mounted) showSystemNotification(context, 'FINANCIAL PERIOD EXPORTED & ARCHIVED. POINTS RESET.');
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Archive error: $e')));
+      if (mounted) showSystemNotification(context, 'ARCHIVE CORRUPTED: $e', isError: true);
     }
   }
 
@@ -145,7 +146,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       double totalRevenue = 0, setupCosts = 0, teamExpenses = 0;
       for (final d in clientsSnap.docs) { totalRevenue += ((d.data() as Map)['amount_received'] as num? ?? 0).toDouble(); }
       for (final d in expensesSnap.docs) {
-        final data = d.data() as Map<String, dynamic>;
+        final data = d.data();
         final amt = (data['amount'] as num? ?? 0).toDouble();
         if (data['type'] == 'setup_cost') {
           setupCosts += amt;
@@ -167,7 +168,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
         ['=== TEAM PERFORMANCE ==='],
         ['Name', 'Points', '% Share', 'Payout (PKR)'],
         ...usersSnap.docs.map((u) {
-          final data = u.data() as Map<String, dynamic>;
+          final data = u.data();
           final pts  = (data['points'] as num? ?? 0).toInt();
           final pct  = totalPts > 0 ? (pts / totalPts * 100) : 0.0;
           final pay  = calculatePayout(userPoints: pts, totalAgencyPoints: totalPts, netProfitPool: netProfit);
@@ -177,171 +178,218 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
         ['=== CLIENT SUMMARY ==='],
         ['Client Name', 'Total Value', 'Received', 'Pending'],
         ...clientsSnap.docs.map((d) {
-          final data = d.data() as Map<String, dynamic>;
+          final data = d.data();
           final total    = (data['total_project_value'] as num? ?? 0).toDouble();
           final received = (data['amount_received'] as num? ?? 0).toDouble();
           return [data['name'] ?? '-', formatPKR(total), formatPKR(received), formatPKR(total - received)];
         }),
       ];
 
-      // Generate CSV manually for reliable compatibility
       final csvLines = rows.map((row) => row.map((cell) {
         final s = cell.toString();
         return s.contains(',') || s.contains('\n') ? '"$s"' : s;
       }).join(',')).join('\n');
       final csv = csvLines;
       if (!mounted) return;
-      showDialog(context: context, builder: (_) => Dialog(backgroundColor: kCard, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Padding(padding: const EdgeInsets.all(16), child: Row(children: [
-          Text('Export — $curMonth', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 16)),
-          const Spacer(),
-          IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-        ])),
-        Container(constraints: const BoxConstraints(maxHeight: 400),
-          child: SingleChildScrollView(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: SelectableText(csv, style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.white70))))),
-        Padding(padding: const EdgeInsets.all(16),
-          child: Text('Select all text above and copy to paste into Excel/Sheets.', style: const TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center)),
-      ])));
+      showPulseModal(context, title: 'Export — $curMonth', child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          constraints: const BoxConstraints(maxHeight: 400),
+          decoration: BoxDecoration(
+            color: kBg.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: kBorder),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: SelectableText(csv, style: GoogleFonts.firaCode(fontSize: 10, color: kText.withValues(alpha: 0.7)))),
+        ),
+        const SizedBox(height: 24),
+        Text('Select all text above and copy to paste into Excel/Sheets.', style: GoogleFonts.inter(color: kMuted, fontSize: 11, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+      ]));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export error: $e')));
+      if (mounted) showSystemNotification(context, 'DATA EXPORT FAILED: $e', isError: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(backgroundColor: kBg, title: Text('Admin Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700, color: Colors.white))),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-
-        // ═══ MONTH LOCK ═══
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [ const Icon(Icons.lock_outline, color: kMuted), const SizedBox(width: 8), Text('Month Lock', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700)) ]),
-          const SizedBox(height: 4),
-          const Text('Locking the month prevents any new writes (tasks, expenses, attendance). Do this before archiving.', style: TextStyle(color: Colors.white54, fontSize: 12)),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            tileColor: kBg,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: kBorder)),
-            title: Text(_monthLocked ? '🔒 Month is LOCKED' : '🔓 Month is Open', style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(_monthLocked ? 'Writes are blocked' : 'Normal operations active', style: const TextStyle(fontSize: 12)),
-            value: _monthLocked,
-            activeThumbColor: Colors.redAccent,
-            onChanged: _toggleLock,
-          ),
-        ]))),
-        const SizedBox(height: 12),
-
-        // ═══ SERVICE WEIGHTS ═══
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [ const Icon(Icons.tune_rounded, color: kMuted), const SizedBox(width: 8), Text('Service Weight Config', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700)) ]),
-          const SizedBox(height: 4),
-          const Text('Edit the point value for each service. Changes apply immediately to new task verifications.', style: TextStyle(color: Colors.white54, fontSize: 12)),
-          const SizedBox(height: 12),
-          ..._weightCtrls.entries.map((e) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
-            Expanded(child: Text(e.key.replaceAll('_', ' '), style: const TextStyle(fontSize: 13, color: Colors.white70))),
-            const SizedBox(width: 12),
-            SizedBox(width: 80, child: TextField(
-              controller: e.value,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-              textAlign: TextAlign.center,
-              decoration: InputDecoration(
-                isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                filled: true, fillColor: kBg,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kBorder)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kBorder)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kAccent, width: 2)),
+    return ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        children: [
+          _sectionHeader('OPERATIONAL LOCK')
+              .animate()
+              .fadeIn(duration: 400.ms)
+              .slideX(begin: -0.1, end: 0),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: kGlowDecoration(color: _monthLocked ? kError : kAccent, borderRadius: 28),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [ 
+                Icon(_monthLocked ? Icons.lock_rounded : Icons.lock_open_rounded, color: _monthLocked ? kError : kAccent, size: 20), 
+                const SizedBox(width: 12), 
+                Text('MONTH STATUS', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w900, color: kText, letterSpacing: 1)) 
+              ]),
+              const SizedBox(height: 12),
+              Text('Locking the system prevents any new data entry points (tasks, expenses, attendance). Ensure all accounts are verified before activation.', 
+                style: GoogleFonts.inter(color: kMuted, fontSize: 11, fontWeight: FontWeight.w700, height: 1.5, letterSpacing: 0.3)),
+              const SizedBox(height: 24),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_monthLocked ? 'SYSTEM LOCKED' : 'SYSTEM ACTIVE', style: GoogleFonts.inter(fontWeight: FontWeight.w900, fontSize: 14, color: kText)),
+                subtitle: Text(_monthLocked ? 'ALL WRITE ACCESS RESTRICTED' : 'STANDARD OPERATIONS PERMITTED', style: GoogleFonts.inter(fontSize: 9, color: kMuted, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                value: _monthLocked,
+                activeThumbColor: kError,
+                activeTrackColor: kError.withValues(alpha: 0.2),
+                onChanged: _toggleLock,
               ),
-            )),
-            const SizedBox(width: 4),
-            const Text('pts', style: TextStyle(color: Colors.white38, fontSize: 12)),
-          ]))),
-          const SizedBox(height: 8),
-          SizedBox(width: double.infinity, child: FilledButton.icon(
-            icon: _savingWeights ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save_outlined, size: 18),
-            label: const Text('Save Weights to Firestore'),
-            style: FilledButton.styleFrom(backgroundColor: kAccent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), padding: const EdgeInsets.symmetric(vertical: 12)),
-            onPressed: _savingWeights ? null : _saveWeights,
-          )),
-        ]))),
-        const SizedBox(height: 12),
+            ]),
+          ).animate().fadeIn(delay: 200.ms, duration: 600.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutCubic),
 
-        // ═══ USER ROLE MANAGEMENT ═══
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [ const Icon(Icons.manage_accounts_outlined, color: kMuted), const SizedBox(width: 8), Text('User Role Management', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700)) ]),
-          const SizedBox(height: 12),
-          StreamBuilder<QuerySnapshot>(
-            stream: usersCol.snapshots(),
-            builder: (_, snap) {
-              final users = snap.data?.docs ?? [];
-              if (users.isEmpty) return const Text('No users found.', style: TextStyle(color: Colors.white38));
-              return Column(children: users.map((uDoc) {
-                final u    = uDoc.data() as Map<String, dynamic>;
-                final name = u['name'] as String? ?? uDoc.id;
-                final role = u['role'] as String? ?? 'member';
-                return Card(color: kBg, margin: const EdgeInsets.only(bottom: 6), child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(children: [
-                    CircleAvatar(backgroundColor: kAccent, radius: 16, child: Text(name.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12))),
-                    const SizedBox(width: 10),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      Text('${(u['points'] as num? ?? 0)} pts', style: const TextStyle(fontSize: 11, color: Colors.white38)),
-                    ])),
-                    DropdownButton<String>(
-                      value: role,
-                      dropdownColor: kCard,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      underline: const SizedBox(),
-                      items: const [
-                        DropdownMenuItem(value: 'member', child: Text('Member')),
-                        DropdownMenuItem(value: 'admin',  child: Text('Admin')),
-                      ],
-                      onChanged: (newRole) async {
-                        if (newRole == null) return;
-                        await usersCol.doc(uDoc.id).update({'role': newRole});
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$name set as $newRole')));
-                      },
+          const SizedBox(height: 48),
+          _sectionHeader('WEIGHT CONFIGURATION')
+              .animate()
+              .fadeIn(delay: 300.ms, duration: 400.ms)
+              .slideX(begin: -0.1, end: 0),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: kGlowDecoration(color: kAccent, borderRadius: 28),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Edit the relative reward points for each service vertical. Changes synchronize across all future verification events.', 
+                style: GoogleFonts.inter(color: kMuted, fontSize: 11, fontWeight: FontWeight.w700, height: 1.5)),
+              const SizedBox(height: 32),
+              ..._weightCtrls.entries.map((e) => Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(children: [
+                Expanded(child: Text(e.key.replaceAll('_', ' ').toUpperCase(), style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w900, color: kText, letterSpacing: 1))),
+                const SizedBox(width: 12),
+                SizedBox(width: 100, child: TextField(
+                  controller: e.value,
+                  keyboardType: TextInputType.number,
+                  style: GoogleFonts.inter(color: kText, fontSize: 14, fontWeight: FontWeight.w900),
+                  textAlign: TextAlign.center,
+                  decoration: InputDecoration(
+                    isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    filled: true, fillColor: kBg.withValues(alpha: 0.5),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: kAccent.withValues(alpha: 0.2))),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: kAccent.withValues(alpha: 0.1))),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: kAccent, width: 2)),
+                  ),
+                )),
+                const SizedBox(width: 12),
+                Text('PTS', style: GoogleFonts.inter(color: kMuted, fontSize: 10, fontWeight: FontWeight.w900)),
+              ]))),
+              const SizedBox(height: 24),
+              SizedBox(width: double.infinity, child: kPrimaryButton(
+                label: 'SYNCHRONIZE WEIGHTS',
+                icon: Icons.sync_rounded,
+                color: kGold,
+                onPressed: _savingWeights ? null : _saveWeights,
+              )),
+            ]),
+          ).animate().fadeIn(delay: 400.ms, duration: 600.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutCubic),
+
+          const SizedBox(height: 48),
+          _sectionHeader('IDENTITY MANAGEMENT')
+              .animate()
+              .fadeIn(delay: 500.ms, duration: 400.ms)
+              .slideX(begin: -0.1, end: 0),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: kGlowDecoration(color: kMuted, borderRadius: 28),
+            child: StreamBuilder<QuerySnapshot>(
+              stream: usersCol.snapshots(),
+              builder: (_, snap) {
+                final users = snap.data?.docs ?? [];
+                if (users.isEmpty) return Padding(padding: const EdgeInsets.all(32), child: Center(child: Text('NO ENTITIES DETECTED', style: GoogleFonts.inter(color: kMuted, fontSize: 11, fontWeight: FontWeight.w900))));
+                return Column(children: users.asMap().entries.map((e) {
+                  final uDoc = e.value;
+                  final u    = uDoc.data() as Map<String, dynamic>;
+                  final name = u['name'] as String? ?? uDoc.id;
+                  final role = u['role'] as String? ?? 'member';
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(color: kBg.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(20)),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      leading: CircleAvatar(
+                        radius: 18,
+                        backgroundColor: (role == 'admin' ? kGold : kAccent).withValues(alpha: 0.1), 
+                        child: Text(name.substring(0, 1).toUpperCase(), style: TextStyle(color: role == 'admin' ? kGold : kAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+                      ),
+                      title: Text(name, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w900, color: kText)),
+                      subtitle: Text('${(u['points'] as num? ?? 0)} ACCUMULATED PTS', style: GoogleFonts.inter(fontSize: 9, color: kMuted, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                      trailing: SizedBox(
+                        width: 125,
+                        child: AnimatedDashboardDropdown<String>(
+                          value: role,
+                          color: role == 'admin' ? kGold : kAccent,
+                          items: const [
+                            DropdownMenuItem(value: 'member', child: Text('MEMBER')),
+                            DropdownMenuItem(value: 'admin',  child: Text('ADMIN')),
+                          ],
+                          onChanged: (newRole) async {
+                            if (newRole == null) return;
+                            await usersCol.doc(uDoc.id).update({'role': newRole});
+                            if (mounted) showSystemNotification(context, '${name.toUpperCase()} GRANTED $newRole STATUS');
+                          },
+                        ),
+                      ),
                     ),
-                  ]),
-                ));
-              }).toList());
-            },
-          ),
-        ]))),
-        const SizedBox(height: 12),
+                  ).animate().fadeIn(delay: (600 + (e.key * 100)).ms, duration: 400.ms).slideX(begin: 0.05, end: 0);
+                }).toList());
+              },
+            ),
+          ).animate().fadeIn(delay: 600.ms, duration: 600.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutCubic),
 
-        // ═══ ARCHIVE & EXPORT ═══
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [ const Icon(Icons.archive_outlined, color: kMuted), const SizedBox(width: 8), Text('Archive & Export', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700)) ]),
-          const SizedBox(height: 4),
-          const Text('Archive saves a month snapshot to Firestore and clears the activity log.', style: TextStyle(color: Colors.white54, fontSize: 12)),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: OutlinedButton.icon(
-              icon: const Icon(Icons.archive_outlined, size: 18),
-              label: const Text('Archive Month'),
-              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.orangeAccent), foregroundColor: Colors.orangeAccent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), padding: const EdgeInsets.symmetric(vertical: 12)),
-              onPressed: _archiveMonth,
-            )),
-            const SizedBox(width: 8),
-            Expanded(child: OutlinedButton.icon(
-              icon: const Icon(Icons.download_outlined, size: 18),
-              label: const Text('Export CSV'),
-              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.greenAccent), foregroundColor: Colors.greenAccent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), padding: const EdgeInsets.symmetric(vertical: 12)),
-              onPressed: _exportCsv,
-            )),
-          ]),
-          const SizedBox(height: 8),
-          Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(8), border: Border.all(color: kBorder)),
-            child: const Row(children: [
-              Icon(Icons.info_outline, color: Colors.white38, size: 14),
-              SizedBox(width: 6),
-              Expanded(child: Text('Automated Day-8 pruning requires a Firebase Cloud Function. Use the Archive button for manual month close.', style: TextStyle(color: Colors.white38, fontSize: 11))),
-            ])),
-        ]))),
-      ]),
-    );
+          const SizedBox(height: 48),
+          _sectionHeader('SYSTEM ARCHIVE')
+              .animate()
+              .fadeIn(delay: 700.ms, duration: 400.ms)
+              .slideX(begin: -0.1, end: 0),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: kGlowDecoration(color: kGold, borderRadius: 28),
+            child: Column(children: [
+              Text('Archiving executes a complete data snapshot and resets all dynamic activity logs for the current cycle.', 
+                style: GoogleFonts.inter(color: kMuted, fontSize: 11, fontWeight: FontWeight.w700, height: 1.5)),
+              const SizedBox(height: 32),
+              Row(children: [
+                Expanded(child: kPrimaryButton(
+                  label: 'ARCHIVE',
+                  icon: Icons.archive_outlined,
+                  color: kError,
+                  onPressed: _archiveMonth,
+                )),
+                const SizedBox(width: 12),
+                Expanded(child: kPrimaryButton(
+                  label: 'EXPORT CSV',
+                  icon: Icons.download_outlined,
+                  color: kAccent,
+                  onPressed: _exportCsv,
+                )),
+              ]),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16), 
+                decoration: BoxDecoration(color: kBg.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(16), border: Border.all(color: kAccent.withValues(alpha: 0.05))),
+                child: Row(children: [
+                   const Icon(Icons.info_outline_rounded, color: kAccent, size: 16),
+                   const SizedBox(width: 12),
+                   Expanded(child: Text('NOTE: Lifecycle maintenance requires daily cryptographic verification.', style: GoogleFonts.inter(color: kText.withValues(alpha: 0.2), fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.3))),
+                ]),
+              ),
+            ]),
+          ).animate().fadeIn(delay: 800.ms, duration: 600.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutCubic),
+          const SizedBox(height: 48),
+        ],
+      );
   }
+
+  Widget _sectionHeader(String label) => Row(children: [
+    Container(width: 4, height: 16, decoration: BoxDecoration(color: kAccent, borderRadius: BorderRadius.circular(2))),
+    const SizedBox(width: 12),
+    Text(label, style: GoogleFonts.syncopate(fontSize: 13, fontWeight: FontWeight.w900, color: kText, letterSpacing: 1.2)),
+  ]);
 }
